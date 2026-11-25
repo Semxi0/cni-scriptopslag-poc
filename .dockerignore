@@ -1,5 +1,6 @@
 target
 .git
 .idea
-.vscode
-*.zip
+*.iml
+README.md
+docs

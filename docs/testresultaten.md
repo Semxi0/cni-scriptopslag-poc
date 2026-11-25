@@ -1,29 +1,40 @@
-# Testresultaten — Scriptopslag
+# Testresultaten — CNI-scriptopslag-PoC
 
-Dit document wordt tijdens de Proof of Concept ingevuld. De commando's voor de eerste handmatige controle staan in de README.
+> Vul alleen resultaten in die echt op jouw laptop zijn gemeten. Deze starter bevat geen meetresultaten.
 
-## Testomgeving
+## Omgeving
 
-- Datum:
-- Hardware / OS:
-- Docker-versie:
-- Java-versie:
-- Aantal peers:
-- Methode en instellingen:
+- Datum / tijd:
+- Git commit-ID:
+- Windows-versie / CPU / geheugen:
+- `docker version`:
+- `docker compose version`:
+- Java-runtime in container:
+- Aantal draaiende peers:
+- Testpayload (naam, versie, grootte):
+- Transport: TCP, lokaal Docker bridge; geen Protocol Buffers of ChaCha20-Poly1305 in starter
 
-## Handmatige controle (starter)
+## Handmatige startercontrole — Full Replication
 
-| Scenario | Verwacht | Waargenomen | Geslaagd? |
+| Scenario | Verwachting | Werkelijk waargenomen | Geslaagd? |
 |---|---|---|---|
-| Drie peers starten | Alle containers zijn Up | Nog niet uitgevoerd | — |
-| Script op A plaatsen | Kopieën bij B en C | Nog niet uitgevoerd | — |
-| Script bij B ophalen | Zelfde inhoud | Nog niet uitgevoerd | — |
-| A stoppen; bij C ophalen | Script bij C blijft beschikbaar | Nog niet uitgevoerd | — |
+| 3 containers gestart | peer-a/b/c Up | Nog niet getest | — |
+| Ping naar A | `PONG\|peer-a` | Nog niet getest | — |
+| Script v1 op A opslaan | `replicated-to=2/2` | Nog niet getest | — |
+| v1 bij B ophalen | zelfde versie en inhoud | Nog niet getest | — |
+| A stoppen, bij C ophalen | v1 nog beschikbaar | Nog niet getest | — |
+| A herstarten, update v2 via B | C kan v2 ophalen | Nog niet getest | — |
 
-## Metingen
+## Latere metingen
 
-Nog geen meetresultaten beschikbaar. Later toevoegen: runnummer, scriptgrootte, peers, methode, verzonden bytes, duur, uitvalscenario en Data Integrity.
+| Run | Methode | Peers | Payloadbytes | Peeruitval | Distributietijd ms | Ophalen ms | Beschikbaar? | Integrity? | Opslagbytes | Gemeten netwerkbytes | Opmerking |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| — | — | — | — | — | — | — | — | — | — | — | — |
 
-## Analyse en beperkingen
+## Analyse / beperkingen
 
-Nog in te vullen. Houd de vergelijking neutraal tot alle methoden zijn getest.
+- Geen prestatieclaims zonder reproduceerbare metingen.
+- Docker op één machine ≠ meerdere fysieke pc's.
+- De starter gebruikt Base64 en geen Protocol Buffers of ChaCha20-Poly1305.
+- In-memory scriptopslag is niet persistent na procesherstart.
+- Game-state Source of Truth en volledige Agent-takeover vallen buiten deze metingen.
