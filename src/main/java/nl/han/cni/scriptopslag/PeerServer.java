@@ -57,7 +57,7 @@ public final class PeerServer {
             socket.setSoTimeout(5000);
             String line = in.readLine();
             if (line == null || line.length() > 2_000_000) { out.println("ERROR|invalid request size"); return; }
-            String[] parts = line.split("\\|", 4);
+            String[] parts = line.split("\\|", 5);
             switch (parts[0]) {
                 case "PING" -> out.println("PONG|" + id);
                 case "LIST" -> out.println("LIST|" + String.join(",", store.snapshot().keySet()));
@@ -80,6 +80,40 @@ public final class PeerServer {
                         out.println("OK|stored-locally|replicated-to=" + copies + "/" + peers.size());
                     } else out.println("OK|replica-stored");
                 }
+
+                case "FPUT" -> {
+                    if (parts.length != 5 || !validName(parts[1])) {
+                        out.println("ERROR|invalid fragment");
+                        break;
+                    }
+
+                    int version = Integer.parseInt(parts[2]);
+                    int index = Integer.parseInt(parts[3]);
+                    byte[] content = decode(parts[4]);
+
+                    store.putFragment(parts[1], version, index, content);
+
+                    out.println("OK|fragment-stored|index=" + index);
+                }
+
+                case "FGET" -> {
+                    if (parts.length != 4 || !validName(parts[1])) {
+                        out.println("ERROR|invalid fragment request");
+                        break;
+                    }
+
+                    int version = Integer.parseInt(parts[2]);
+                    int index = Integer.parseInt(parts[3]);
+
+                    byte[] fragment = store.getFragment(parts[1], version, index);
+
+                    if (fragment == null) {
+                        out.println("NOT_FOUND");
+                    } else {
+                        out.println("FRAGMENT|" + index + "|" + encode(fragment));
+                    }
+                }
+
                 default -> out.println("ERROR|unknown command");
             }
         } catch (Exception ex) {

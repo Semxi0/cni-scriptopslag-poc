@@ -1,4 +1,5 @@
-# Drie aparte Java-processen op hetzelfde virtuele Docker-netwerk.
+
+# Vijf aparte Java-processen op hetzelfde virtuele Docker-netwerk.
 # De PoC gebruikt TCP-sockets, geen HTTP/REST.
 services:
   peer-a:
@@ -8,6 +9,7 @@ services:
       PORT: "7000"
       PEERS: "peer-b:7000,peer-c:7000"
     networks: [poc-net]
+
   peer-b:
     build: .
     environment:
@@ -15,6 +17,7 @@ services:
       PORT: "7000"
       PEERS: "peer-a:7000,peer-c:7000"
     networks: [poc-net]
+
   peer-c:
     build: .
     environment:
@@ -22,6 +25,23 @@ services:
       PORT: "7000"
       PEERS: "peer-a:7000,peer-b:7000"
     networks: [poc-net]
+
+  peer-d:
+    build: .
+    environment:
+      PEER_ID: peer-d
+      PORT: "7000"
+      PEERS: ""
+    networks: [poc-net]
+
+  peer-e:
+    build: .
+    environment:
+      PEER_ID: peer-e
+      PORT: "7000"
+      PEERS: ""
+    networks: [poc-net]
+
 networks:
   poc-net:
     driver: bridge
