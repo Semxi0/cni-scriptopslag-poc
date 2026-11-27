@@ -1,25 +1,31 @@
 # CNI — Scriptopslag PoC (Docker, Java 21, TCP)
 
-Een **onderzoeksprototype** voor de vraag hoe Agent- en NPC-scriptgegevens verdeeld kunnen worden over peers zonder centrale spelserver. Deze repository vergelijkt uiteindelijk vier methoden: Full Replication, Data Fragmentation zonder Redundancy, Partial Replication en Erasure Coding (Reed-Solomon 3+2).
+Deze **onderzoeks-PoC** onderzoekt hoe scripts van Agents en NPC's over peers kunnen worden opgeslagen en verdeeld zonder centrale spelserver. We vergelijken vier methoden:
 
-## Huidige status: starter — alleen Full Replication
+1. **Full Replication** — iedere peer bewaart een volledige kopie.
+2. **Data Fragmentation (zonder redundancy)** — een script wordt verdeeld in losse delen, zonder reservekopieën.
+3. **Partial Replication** — een vaste selectie peers bewaart een volledige kopie (replication factor 2).
+4. **Erasure Coding (Reed-Solomon 3+2)** — drie datashards en twee herstelshards worden over vijf peers verdeeld.
 
-**Al geïmplementeerd:** 3 aparte Java-processen in Docker-containers, TCP-verkeer tussen de peers, Full Replication, in-memory opslag van willekeurige bytes, scriptversies, eenvoudige controle bij peeruitval. Een CLI gebruikt leesbare tekst als voorbeeldpayload; de opslaglaag is onafhankelijk van het formaat.
+De PoC gebruikt Java 21, TCP en **in-memory opslag**. De peers communiceren binnen één lokaal Docker-netwerk. Dit is een onderzoeksprototype, geen productieklare gamecomponent.
 
-**Nog niet geïmplementeerd:** de overige drie methoden, Protocol Buffers, AST-parser/interpreter, ChaCha20-Poly1305, automatische herstelacties, opslag op schijf, systematische benchmarks, peerdiscovery, host election. Geen productiecode.
+## Benodigdheden en starten
 
-## Eerst uitvoeren (Windows 11 / PowerShell)
-
-Vereist: Docker Desktop **gestart**, `docker compose version` beschikbaar. Open een terminal in de **projectroot** bij `compose.yaml`.
+- Docker Desktop met Docker Compose.
+- Een terminal in de projectroot (de map met `compose.yaml`).
+- Java 21 en Maven zijn alleen lokaal nodig wanneer je buiten Docker de JUnit-tests wilt draaien. De Dockerfile bouwt de applicatie zelf met Maven.
 
 ```powershell
+docker compose down
 docker compose up -d --build
 docker compose ps
 ```
 
-Verwacht: `peer-a`, `peer-b`, `peer-c` zijn *Up*. Docker bouwt zelf met Maven; lokaal `mvn compile` is **niet nodig** om Docker te starten.
+Verwacht: **vijf draaiende containers**, `peer-a` t/m `peer-e`.
 
-### Controle 1: TCP-verbinding
+Alle voorbeelden gebruiken de CLI in een Docker-container. De PoC communiceert intern via TCP op poort 7000.
+
+**Verbinding testen:**
 
 ```powershell
 docker compose exec -T peer-a java -cp /app/app.jar nl.han.cni.scriptopslag.PeerClient ping
@@ -27,75 +33,149 @@ docker compose exec -T peer-a java -cp /app/app.jar nl.han.cni.scriptopslag.Peer
 
 Verwacht: `PONG|peer-a`.
 
-### Controle 2: distribueren en ophalen
+## De vier opslagmethoden testen
+
+> Voer de scenario's bij voorkeur in volgorde uit. Start gestopte peers opnieuw voordat je naar een andere methode gaat. **Een herstart wist de in-memory gegevens van die peer**; sla scripts dus opnieuw op als je een herstelscenario wilt herhalen.
+
+### 1. Full Replication
+
+Een `PUT` naar `peer-a` slaat het script lokaal op en verstuurt kopieën naar de ingestelde peers `peer-b` en `peer-c`. Een `GET` leest alleen van de aangesproken peer.
 
 ```powershell
-docker compose exec -T peer-a java -cp /app/app.jar nl.han.cni.scriptopslag.PeerClient put agent-default 1 MOVE_FORWARD
-docker compose exec -T peer-b java -cp /app/app.jar nl.han.cni.scriptopslag.PeerClient get agent-default
-```
+# Opslaan en controleren
+docker compose exec -T peer-a java -cp /app/app.jar nl.han.cni.scriptopslag.PeerClient put regression-full 1 MOVE_FORWARD
+docker compose exec -T peer-b java -cp /app/app.jar nl.han.cni.scriptopslag.PeerClient get regression-full
 
-Verwacht bij het opslaan: `OK|stored-locally|replicated-to=2/2` (als peers bereikbaar zijn). Bij ophalen op B: `version=1`, `content=MOVE_FORWARD`.
-
-### Controle 3: Peer Failure
-
-```powershell
+# Oorspronkelijke peer valt weg
 docker compose stop peer-a
-docker compose exec -T peer-c java -cp /app/app.jar nl.han.cni.scriptopslag.PeerClient get agent-default
+docker compose exec -T peer-c java -cp /app/app.jar nl.han.cni.scriptopslag.PeerClient get regression-full
+
+# Herstellen voor de volgende test
+docker compose start peer-a
 ```
 
-Verwacht: `version=1`, `content=MOVE_FORWARD`. Peer C heeft al een kopie.
+Verwacht: `OK|stored-locally|replicated-to=2/2` bij opslaan. Zowel voor als na uitval van `peer-a` kan `MOVE_FORWARD` via een andere peer worden opgehaald.
 
-### Controle 4: simpele scriptupdate
+### 2. Data Fragmentation zonder redundancy
+
+Het script wordt verdeeld over `peer-a`, `peer-b` en `peer-c`. Voor reconstructie zijn **alle drie de fragmenten** nodig.
 
 ```powershell
-docker compose start peer-a
-docker compose exec -T peer-b java -cp /app/app.jar nl.han.cni.scriptopslag.PeerClient put agent-default 2 DEFEND
-docker compose exec -T peer-c java -cp /app/app.jar nl.han.cni.scriptopslag.PeerClient get agent-default
+# Verdelen en reconstrueren
+docker compose exec -T peer-a java -cp /app/app.jar nl.han.cni.scriptopslag.PeerClient fsplit regression-frag 1 MOVE_FORWARD
+docker compose exec -T peer-a java -cp /app/app.jar nl.han.cni.scriptopslag.PeerClient fjoin regression-frag 1
+
+# Eén fragment wordt onbereikbaar
+docker compose stop peer-b
+docker compose exec -T peer-a java -cp /app/app.jar nl.han.cni.scriptopslag.PeerClient fjoin regression-frag 1
+
+# Herstellen voor de volgende test
+docker compose start peer-b
 ```
 
-Verwacht op C: `version=2`, `content=DEFEND`. **Let op:** peer-a was gestopt, dus de oude in-memory inhoud van A is verdwenen; de update wordt opnieuw naar A gekopieerd als die weer bereikbaar is.
+Verwacht: aanvankelijk `Hersteld script: MOVE_FORWARD`. Bij uitval van `peer-b` mislukt reconstructie: er is geen redundancy. Na herstart van `peer-b` is het oude fragment verdwenen.
 
-Optioneel: `docker compose exec -T peer-c java -cp /app/app.jar nl.han.cni.scriptopslag.PeerClient stats` geeft het aantal scripts en het aantal opgeslagen **payloadbytes**, niet het totale geheugengebruik.
+### 3. Partial Replication (replication factor 2)
 
-**Opruimen:**
+De code kiest op basis van de scriptnaam steeds dezelfde twee peers uit `peer-a`, `peer-b` en `peer-c`. Voor `partial-test` zijn dat **`peer-c` en `peer-a`**. De volgorde is niet willekeurig.
+
+```powershell
+# Twee volledige kopieën opslaan en het script ophalen
+docker compose exec -T peer-b java -cp /app/app.jar nl.han.cni.scriptopslag.PeerClient pput partial-test 1 MOVE_FORWARD
+docker compose exec -T peer-b java -cp /app/app.jar nl.han.cni.scriptopslag.PeerClient pget partial-test
+
+# De eerste replica valt weg; de tweede is nog beschikbaar
+docker compose stop peer-c
+docker compose exec -T peer-b java -cp /app/app.jar nl.han.cni.scriptopslag.PeerClient pget partial-test
+
+# Beide replica's vallen weg
+docker compose stop peer-a
+docker compose exec -T peer-b java -cp /app/app.jar nl.han.cni.scriptopslag.PeerClient pget partial-test
+
+# Herstellen voor de volgende test
+docker compose start peer-a peer-c
+```
+
+Verwacht: eerst `Kopieën opgeslagen: 2/2` en `MOVE_FORWARD` van `peer-c`. Na uitval van `peer-c` wordt het script van `peer-a` opgehaald. Als beide replica's uitvallen, verschijnt `Script niet beschikbaar.`
+
+### 4. Erasure Coding (Reed-Solomon 3+2)
+
+De PoC maakt **vijf shards** voor `peer-a` t/m `peer-e`. Uit minimaal drie verschillende shards kan het originele script worden hersteld.
+
+```powershell
+# Vijf shards opslaan en script herstellen
+docker compose exec -T peer-a java -cp /app/app.jar nl.han.cni.scriptopslag.PeerClient eput regression-erasure 1 MOVE_FORWARD
+docker compose exec -T peer-a java -cp /app/app.jar nl.han.cni.scriptopslag.PeerClient eget regression-erasure 1
+
+# Twee peers vallen weg: herstel moet nog lukken
+docker compose stop peer-b peer-d
+docker compose exec -T peer-a java -cp /app/app.jar nl.han.cni.scriptopslag.PeerClient eget regression-erasure 1
+
+# Drie peers vallen weg: herstel moet mislukken
+docker compose stop peer-c
+docker compose exec -T peer-a java -cp /app/app.jar nl.han.cni.scriptopslag.PeerClient eget regression-erasure 1
+
+# Containers weer starten
+docker compose start peer-b peer-c peer-d
+```
+
+Verwacht: met vijf of drie beschikbare shards wordt `MOVE_FORWARD` hersteld; met slechts twee shards verschijnt `Reconstructie mislukt`.
+
+## JUnit-tests
+
+De unit tests voor `DataFragmentation` en `ErasureCoding` controleren onder andere correcte reconstructie, ontbrekende delen, ongeldige invoer en herstel bij verschillende ontbrekende shards.
+
+```powershell
+mvn clean test
+```
+
+Verwacht: `BUILD SUCCESS` en **8 geslaagde JUnit-tests**. Dit vereist lokaal Java 21 en Maven. De Docker-regressietests hierboven testen daarnaast de netwerkcommunicatie en het gedrag bij peeruitval.
+
+## Metingen
+
+De PoC is gebruikt voor een verkennende vergelijking van **opslaggebruik**, **uitvoeringstijd** (CLI-commando `time`) en **Docker-netwerkverkeer** (`docker stats`). De meetmethode, resultaten en kanttekeningen staan in [`docs/testplan.md`](docs/testplan.md) en [`docs/testresultaten.md`](docs/testresultaten.md).
+
+Voorbeeld van een tijdmeting:
+
+```powershell
+docker compose exec -T peer-a java -cp /app/app.jar nl.han.cni.scriptopslag.PeerClient time eput meting-erasure 1 MOVE_FORWARD
+```
+
+De gemeten tijd omvat ook de CLI- en TCP-verwerking. Alle containers draaien op één computer; dit zijn **geen** metingen op een fysiek netwerk met afzonderlijke apparaten. Het Docker-netwerkverkeer is indicatief en bevat mogelijk achtergrondverkeer.
+
+## Relatie met het CNI-project
+
+- **Scriptopslag:** de PoC bewaart scriptinhoud als bytes. Het is geen AST-parser of scriptinterpreter en test niet hoe of waar scripts worden uitgevoerd.
+- **ADR-17 (berichtformaat):** de PoC gebruikt tekstberichten met Base64, **geen Protocol Buffers**.
+- **ADR-20 (network security):** er is **geen ChaCha20-Poly1305-encryptie** geïmplementeerd; metingen bevatten dus geen encryptie-overhead.
+- **ADR-11 (peer discovery):** de peers hebben vaste Docker-DNS-namen; er is **geen automatische peerdiscovery**.
+- **ADR-10 (source of truth):** deze PoC neemt geen beslissing over game-state-authoriteit of de command-log.
+
+De status van deze ADR's kan gedurende het project veranderen. De PoC onderzoekt uitsluitend de **distributie en beschikbaarheid van scriptgegevens**.
+
+## Beperkingen
+
+- **Geen persistente opslag:** stoppen en herstarten van een container verwijdert de gegevens in die container. Er is geen automatische resynchronisatie.
+- **Vaste peerlijsten:** drie peers voor Full/Data/Partial en vijf voor Erasure Coding; geen peerdiscovery, host election of dynamische verdeling.
+- **Eenvoudig netwerkprotocol:** TCP-tekstregels met Base64, zonder encryptie of authenticatie.
+- **Full Replication is best effort:** `PUT` verspreidt synchroon; bij onbereikbare peers kunnen kopieën verschillen. Een `GET` zoekt niet automatisch op andere peers.
+- **Vereenvoudigd versiebeheer:** oudere versies worden geweigerd, maar gelijktijdige conflicterende updates zijn niet volledig opgelost.
+- **Erasure Coding is een eigen PoC-implementatie:** de Reed-Solomon-logica is geen externe productie-library en is niet bedoeld als productieklare codec.
+- **Beperkte schaal en meetomgeving:** geen representatieve LAN-benchmark, geen grootschalige peerbelasting en geen bewijs voor volledige game-QAR's zoals automatische Agent-takeover.
+
+## Projectbestanden
+
+| Bestand | Functie |
+|---|---|
+| `Dockerfile` | Multi-stage Maven-build en Java-runtime |
+| `compose.yaml` | Vijf peers in één Docker-netwerk |
+| `src/main/java/nl/han/cni/scriptopslag/` | Opslagmethoden, TCP-server, CLI en in-memory opslag |
+| `src/test/java/nl/han/cni/scriptopslag/` | JUnit-tests voor fragmentatie en erasure coding |
+| `docs/testplan.md` | Testscenario's, meetmethode en afbakening |
+| `docs/testresultaten.md` | Waarnemingen, metingen en beperkingen |
+
+## Opruimen
 
 ```powershell
 docker compose down
 ```
-
-## Maven: wanneer wel en niet?
-
-- **Docker-route (aanbevolen voor de netwerk-PoC):** alleen `docker compose up -d --build` is nodig. De multi-stage `Dockerfile` voert `mvn package` in een buildcontainer uit.
-- **Lokaal ontwikkelen in IntelliJ:** optioneel `mvn compile` of `mvn test` in de rootfolder waar `pom.xml` staat. Er zijn nog geen JUnit-tests aanwezig: `mvn test` voert op dit moment geen relevante tests uit.
-- Na Java-codewijzigingen: `docker compose up -d --build` opnieuw draaien; alleen `mvn compile` op je pc verandert **niet** de draaiende containers.
-
-## Relatie met de projectdocumenten (25 november 2026)
-
-| Bron | Status | Afspraak / begrenzing voor deze PoC |
-|---|---|---|
-| Onderzoek scriptopslag | literatuurfase | Vier methoden vergelijken; deze starter demonstreert alleen Full Replication |
-| Onderzoek *Hoe wordt het script opgeslagen?* | onderzoeksconclusie | `.script` als lokale brontekst; voorstel om AST te versturen; deze PoC slaat **opaque bytes** op (geen AST-implementatie) |
-| ADR-17 berichtformaat | **Draft** | Protocol Buffers voorgesteld; nog niet geïmplementeerd; geen conclusies over daadwerkelijke Protocol Buffers-overhead |
-| ADR-20 Network Security | **Accepted** | ChaCha20-Poly1305 voor game-communicatie; nog niet geïmplementeerd; timingresultaten zijn dus exclusief encryptie |
-| ADR-11 Peer Discovery | **Accepted** | UDP broadcast binnen LAN; in Docker gebruikt de PoC vaste DNS-namen (`peer-a` etc.), dus **geen** discoverytest |
-| ADR-10 Source of Truth | **Draft** | Voorkeur host-authoritative met event log voor game-state; deze PoC beslist **niet** over game-state authority |
-
-De opslag van scriptbytes is **niet hetzelfde** als het repliceren van de command-log van de game. TCP is hier alleen een transportkeuze voor de opslagtest. Het berichtformaat van de starter is een simpele tekstregel met Base64; dat telt niet als Protocol Buffers of encryptie. De PoC gebruikt een vast ingestelde peer-lijst; deze vormt geen centrale game-server.
-
-## Scope en beperkingen
-
-- Docker-bridge op **één laptop** biedt echte communicatie tussen aparte processen maar niet dezelfde netwerkcondities als een echt LAN met losse computers.
-- Scripts staan **in memory**. Bij stop/herstart van een container verdwijnen diens gegevens; heraansluiten en resynchroniseren moet later worden ontworpen.
-- Schrijven naar een peer gebruikt Full Replication. `GET` leest alleen bij de aangesproken peer, dus er wordt nog **niet** automatisch gezocht bij andere peers.
-- Replicatie is synchroon en best effort; bij mislukte verzending kunnen de kopieën uiteenlopen. Versienummers blokkeren oudere updates maar lossen gelijktijdige, conflicterende writes met hetzelfde versienummer nog niet op.
-- Er ontbreken security, automatische recovery, volledige testmetingen en ondersteuning voor 50 peers. Deze starter bewijst **niet** QAR-14 (volledige Agent-takeover binnen 3 seconden).
-
-## Bestanden
-
-- `Dockerfile` — multi-stage Maven-build en Java-runtime
-- `compose.yaml` — drie peers in een lokaal Docker-netwerk
-- `src/main/java/nl/han/cni/scriptopslag` — server, CLI, in-memory store en immutable ScriptData
-- `docs/testplan.md` — testscenario's, afbakening en reproduceerbaarheid
-- `docs/testresultaten.md` — invuldocument voor echte waarnemingen
-
-Deze README is al gericht op **reproduceren**. Vul testresultaten en exacte versies pas in nadat je het daadwerkelijk op jouw laptop hebt uitgevoerd.
