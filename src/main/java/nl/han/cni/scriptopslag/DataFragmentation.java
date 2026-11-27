@@ -7,6 +7,7 @@ import java.util.List;
 
 public class DataFragmentation {
 
+    // Verdeel een script in een bepaald aantal fragmenten.
     public static List<byte[]> split(byte[] data, int numberOfParts) {
         if (data == null) {
             throw new IllegalArgumentException("Data mag niet null zijn");
@@ -23,7 +24,12 @@ public class DataFragmentation {
         int offset = 0;
 
         for (int i = 0; i < numberOfParts; i++) {
-            int partSize = baseSize + (i < remainder ? 1 : 0);
+            int partSize = baseSize;
+
+            // Verdeel overgebleven bytes over de eerste fragmenten.
+            if (i < remainder) {
+                partSize++;
+            }
 
             byte[] part = new byte[partSize];
             System.arraycopy(data, offset, part, 0, partSize);
@@ -35,6 +41,7 @@ public class DataFragmentation {
         return parts;
     }
 
+    // Voeg alle fragmenten in de juiste volgorde samen.
     public static byte[] join(List<byte[]> parts) {
         if (parts == null || parts.isEmpty()) {
             throw new IllegalArgumentException("Er moeten delen aanwezig zijn");

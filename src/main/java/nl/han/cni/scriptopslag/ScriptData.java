@@ -2,7 +2,7 @@ package nl.han.cni.scriptopslag;
 
 import java.util.Arrays;
 
-/** Opaque script-payload: tekst of (later) geserialiseerde AST, met versie. */
+/** Bewaart de inhoud en versie van een script. */
 public record ScriptData(int version, byte[] content) {
     public ScriptData {
         if (version < 1) throw new IllegalArgumentException("version must be >= 1");

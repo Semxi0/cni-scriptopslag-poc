@@ -9,6 +9,7 @@ public final class PartialReplication {
     private PartialReplication() {
     }
 
+    // Kies op welke peers het script wordt opgeslagen.
     public static List<String> selectPeers(
             String scriptName,
             List<String> peers,
@@ -26,17 +27,17 @@ public final class PartialReplication {
             throw new IllegalArgumentException("Ongeldige replication factor");
         }
 
-        List<String> selected = new ArrayList<>();
+        List<String> selectedPeers = new ArrayList<>();
 
-        // Bepaal een vaste startpositie op basis van de scriptnaam.
-        int start = Math.floorMod(scriptName.hashCode(), peers.size());
+        // Kies een vaste startpositie op basis van de scriptnaam.
+        int startIndex = Math.floorMod(scriptName.hashCode(), peers.size());
 
-        // Selecteer precies het gevraagde aantal peers.
+        // Selecteer het gewenste aantal peers.
         for (int i = 0; i < replicationFactor; i++) {
-            int index = (start + i) % peers.size();
-            selected.add(peers.get(index));
+            int peerIndex = (startIndex + i) % peers.size();
+            selectedPeers.add(peers.get(peerIndex));
         }
 
-        return selected;
+        return selectedPeers;
     }
 }

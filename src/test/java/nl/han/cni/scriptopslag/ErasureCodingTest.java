@@ -16,10 +16,15 @@ class ErasureCodingTest {
 
     @Test
     void restoreWithAllFiveShards() {
+        // Arrange
         byte[][] shards = ErasureCoding.encode(original);
 
+        // Act
+        byte[] restored = ErasureCoding.decode(shards);
+
+        // Assert
         assertEquals(5, shards.length);
-        assertArrayEquals(original, ErasureCoding.decode(shards));
+        assertArrayEquals(original, restored);
     }
 
     @Test
@@ -28,14 +33,18 @@ class ErasureCodingTest {
         for (int first = 0; first < 5; first++) {
             for (int second = first + 1; second < 5; second++) {
 
+                // Arrange
                 byte[][] shards = ErasureCoding.encode(original);
-
                 shards[first] = null;
                 shards[second] = null;
 
+                // Act
+                byte[] restored = ErasureCoding.decode(shards);
+
+                // Assert
                 assertArrayEquals(
                         original,
-                        ErasureCoding.decode(shards),
+                        restored,
                         "Herstel mislukt bij ontbrekende shards "
                                 + first + " en " + second
                 );
@@ -45,12 +54,14 @@ class ErasureCodingTest {
 
     @Test
     void restoreWithThreeMissingShardsShouldFail() {
+        // Arrange
         byte[][] shards = ErasureCoding.encode(original);
 
         shards[0] = null;
         shards[1] = null;
         shards[2] = null;
 
+        // Act & Assert
         assertThrows(
                 IllegalArgumentException.class,
                 () -> ErasureCoding.decode(shards)
@@ -59,6 +70,7 @@ class ErasureCodingTest {
 
     @Test
     void restoredScriptShouldMatchOriginalBytes() {
+        // Arrange
         byte[] binaryData = new byte[1000];
 
         for (int i = 0; i < binaryData.length; i++) {
@@ -70,8 +82,10 @@ class ErasureCodingTest {
         shards[1] = null;
         shards[4] = null;
 
+        // Act
         byte[] restored = ErasureCoding.decode(shards);
 
-        assertTrue(Arrays.equals(binaryData, restored));
+        // Assert
+        assertArrayEquals(binaryData, restored);
     }
 }

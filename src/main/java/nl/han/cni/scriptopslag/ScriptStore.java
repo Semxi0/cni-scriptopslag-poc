@@ -8,38 +8,37 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public final class ScriptStore {
 
-    // Bestaande opslag voor volledige scripts (Full Replication).
+    // Opslag voor volledige scripts.
     private final Map<String, ScriptData> scripts = new ConcurrentHashMap<>();
 
-    // Nieuwe opslag voor losse scriptdelen (Data Fragmentation).
+    // Opslag voor losse scriptdelen.
     private final Map<String, byte[]> fragments = new ConcurrentHashMap<>();
 
-    public boolean put(String name, ScriptData data) {
+    // Sla een script op, tenzij er al een nieuwere versie bestaat.
+    public synchronized boolean put(String name, ScriptData data) {
         validateName(name);
 
-        final boolean[] accepted = {false};
+        ScriptData current = scripts.get(name);
 
-        scripts.compute(name, (key, current) -> {
-            if (current != null && current.version() > data.version()) {
-                return current;
-            }
+        if (current != null && current.version() > data.version()) {
+            return false;
+        }
 
-            accepted[0] = true;
-            return data;
-        });
-
-        return accepted[0];
+        scripts.put(name, data);
+        return true;
     }
 
+    // Haal een volledig script op.
     public ScriptData get(String name) {
         return scripts.get(name);
     }
 
+    // Geef een overzicht van alle volledige scripts.
     public Map<String, ScriptData> snapshot() {
         return new TreeMap<>(scripts);
     }
 
-    // Sla één uniek scriptdeel op.
+    // Sla één scriptdeel op.
     public void putFragment(String name, int version,
                             int index, byte[] content) {
 
@@ -59,30 +58,34 @@ public final class ScriptStore {
         String key = fragmentKey(name, version, index);
         byte[] fragment = fragments.get(key);
 
-        return fragment == null
-                ? null
-                : Arrays.copyOf(fragment, fragment.length);
+        if (fragment == null) {
+            return null;
+        }
+
+        return Arrays.copyOf(fragment, fragment.length);
     }
 
-    // Totale grootte van volledige scripts en fragments.
+    // Bereken hoeveel bytes alle opgeslagen scripts en fragmenten gebruiken.
     public long storedPayloadBytes() {
-        long scriptBytes = scripts.values()
-                .stream()
-                .mapToLong(ScriptData::size)
-                .sum();
+        long total = 0;
 
-        long fragmentBytes = fragments.values()
-                .stream()
-                .mapToLong(fragment -> fragment.length)
-                .sum();
+        for (ScriptData script : scripts.values()) {
+            total += script.size();
+        }
 
-        return scriptBytes + fragmentBytes;
+        for (byte[] fragment : fragments.values()) {
+            total += fragment.length;
+        }
+
+        return total;
     }
 
+    // Maak een unieke sleutel voor ieder scriptdeel.
     private String fragmentKey(String name, int version, int index) {
         return name + ":" + version + ":" + index;
     }
 
+    // Controleer of de scriptnaam geldig is.
     private void validateName(String name) {
         if (name == null || !name.matches("[A-Za-z0-9_.-]{1,80}")) {
             throw new IllegalArgumentException("Ongeldige scriptnaam");

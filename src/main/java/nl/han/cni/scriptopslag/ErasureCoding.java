@@ -6,11 +6,12 @@ import java.util.Arrays;
 
 public final class ErasureCoding {
 
+    // Verdeel het script in 3 datashards en 2 herstelshards.
     public static final int DATA_SHARDS = 3;
     public static final int PARITY_SHARDS = 2;
-    public static final int TOTAL_SHARDS = 5;
+    public static final int TOTAL_SHARDS = DATA_SHARDS + PARITY_SHARDS;
 
-    // Drie originele delen en twee Reed-Solomon-herstelstukken.
+    // Bepaalt hoe de datashards worden gebruikt om herstelshards te maken.
     private static final int[][] MATRIX = {
             {1, 0, 0},
             {0, 1, 0},
@@ -22,165 +23,194 @@ public final class ErasureCoding {
     private ErasureCoding() {
     }
 
+    // Verdeel een script in vijf shards.
     public static byte[][] encode(byte[] data) {
         if (data == null) {
             throw new IllegalArgumentException("Data ontbreekt");
         }
 
-        // De eerste vier bytes bewaren de oorspronkelijke lengte.
+        // Bewaar de oorspronkelijke lengte in de eerste 4 bytes.
         byte[] payload = ByteBuffer.allocate(data.length + 4)
                 .putInt(data.length)
                 .put(data)
                 .array();
 
-        int shardSize = (payload.length + DATA_SHARDS - 1)
-                / DATA_SHARDS;
+        // Bereken de grootte van iedere shard, afgerond naar boven.
+        int shardSize = (payload.length + DATA_SHARDS - 1) / DATA_SHARDS;
 
         byte[][] shards = new byte[TOTAL_SHARDS][shardSize];
 
+        // Verdeel de originele gegevens over de eerste drie shards.
         for (int i = 0; i < payload.length; i++) {
             shards[i / shardSize][i % shardSize] = payload[i];
         }
 
-        // Bereken twee parity shards.
-        for (int i = DATA_SHARDS; i < TOTAL_SHARDS; i++) {
-            for (int b = 0; b < shardSize; b++) {
+        // Bereken de twee herstelshards met Reed-Solomon.
+        for (int shard = DATA_SHARDS; shard < TOTAL_SHARDS; shard++) {
+            for (int byteIndex = 0; byteIndex < shardSize; byteIndex++) {
                 int value = 0;
 
-                for (int d = 0; d < DATA_SHARDS; d++) {
-                    value ^= multiply(MATRIX[i][d],
-                            shards[d][b] & 0xFF);
+                for (int dataShard = 0; dataShard < DATA_SHARDS; dataShard++) {
+                    value ^= multiply(
+                            MATRIX[shard][dataShard],
+                            shards[dataShard][byteIndex] & 0xFF
+                    );
                 }
 
-                shards[i][b] = (byte) value;
+                shards[shard][byteIndex] = (byte) value;
             }
         }
 
         return shards;
     }
 
+    // Herstel het oorspronkelijke script uit minimaal drie shards.
     public static byte[] decode(byte[][] shards) {
         if (shards == null || shards.length != TOTAL_SHARDS) {
             throw new IllegalArgumentException("Er zijn vijf posities nodig");
         }
 
-        int[] available = new int[DATA_SHARDS];
-        int count = 0;
+        int[] availableShards = new int[DATA_SHARDS];
+        int availableCount = 0;
         int shardSize = -1;
 
+        // Zoek beschikbare shards en controleer hun grootte.
         for (int i = 0; i < TOTAL_SHARDS; i++) {
             if (shards[i] != null) {
                 if (shardSize == -1) {
                     shardSize = shards[i].length;
                 } else if (shards[i].length != shardSize) {
-                    throw new IllegalArgumentException(
-                            "Shardgroottes verschillen");
+                    throw new IllegalArgumentException("Shardgroottes verschillen");
                 }
 
-                if (count < DATA_SHARDS) {
-                    available[count] = i;
+                if (availableCount < DATA_SHARDS) {
+                    availableShards[availableCount] = i;
                 }
-                count++;
+
+                availableCount++;
             }
         }
 
-        if (count < DATA_SHARDS) {
+        if (availableCount < DATA_SHARDS) {
             throw new IllegalArgumentException(
-                    "Onvoldoende shards: minimaal drie nodig");
+                    "Onvoldoende shards: minimaal drie nodig"
+            );
         }
 
-        // Bepaal hoe de originele data uit drie shards te herstellen is.
-        int[][] matrix = new int[DATA_SHARDS][DATA_SHARDS];
+        // Maak een matrix met de drie geselecteerde shards.
+        int[][] selectedMatrix = new int[DATA_SHARDS][DATA_SHARDS];
 
         for (int i = 0; i < DATA_SHARDS; i++) {
-            matrix[i] = MATRIX[available[i]].clone();
+            selectedMatrix[i] = MATRIX[availableShards[i]].clone();
         }
 
-        int[][] inverse = invert(matrix);
-        byte[][] restored = new byte[DATA_SHARDS][shardSize];
+        // De inverse matrix maakt het mogelijk de originele data te herstellen.
+        int[][] inverseMatrix = invert(selectedMatrix);
+        byte[][] restoredShards = new byte[DATA_SHARDS][shardSize];
 
-        for (int d = 0; d < DATA_SHARDS; d++) {
-            for (int b = 0; b < shardSize; b++) {
+        // Bereken de oorspronkelijke drie datashards.
+        for (int dataShard = 0; dataShard < DATA_SHARDS; dataShard++) {
+            for (int byteIndex = 0; byteIndex < shardSize; byteIndex++) {
                 int value = 0;
 
-                for (int j = 0; j < DATA_SHARDS; j++) {
-                    value ^= multiply(inverse[d][j],
-                            shards[available[j]][b] & 0xFF);
+                for (int i = 0; i < DATA_SHARDS; i++) {
+                    value ^= multiply(
+                            inverseMatrix[dataShard][i],
+                            shards[availableShards[i]][byteIndex] & 0xFF
+                    );
                 }
 
-                restored[d][b] = (byte) value;
+                restoredShards[dataShard][byteIndex] = (byte) value;
             }
         }
 
+        // Voeg de herstelde datashards samen.
         byte[] payload = new byte[DATA_SHARDS * shardSize];
 
         for (int i = 0; i < DATA_SHARDS; i++) {
-            System.arraycopy(restored[i], 0, payload,
-                    i * shardSize, shardSize);
+            System.arraycopy(
+                    restoredShards[i], 0,
+                    payload, i * shardSize,
+                    shardSize
+            );
         }
 
+        // Verwijder de extra bytes en geef het oorspronkelijke script terug.
         int originalLength = ByteBuffer.wrap(payload).getInt();
 
         if (originalLength < 0 || originalLength > payload.length - 4) {
-            throw new IllegalArgumentException(
-                    "Ongeldige oorspronkelijke lengte");
+            throw new IllegalArgumentException("Ongeldige oorspronkelijke lengte");
         }
 
         return Arrays.copyOfRange(payload, 4, 4 + originalLength);
     }
 
+    // Bereken de inverse van een matrix om ontbrekende data te herstellen.
     private static int[][] invert(int[][] input) {
-        int n = input.length;
-        int[][] a = new int[n][2 * n];
+        int size = input.length;
+        int[][] matrix = new int[size][2 * size];
 
-        for (int i = 0; i < n; i++) {
-            System.arraycopy(input[i], 0, a[i], 0, n);
-            a[i][n + i] = 1;
+        // Plaats de originele matrix naast een identiteitsmatrix.
+        for (int i = 0; i < size; i++) {
+            System.arraycopy(input[i], 0, matrix[i], 0, size);
+            matrix[i][size + i] = 1;
         }
 
-        for (int col = 0; col < n; col++) {
-            int pivot = col;
+        // Maak de linkerhelft een identiteitsmatrix.
+        for (int column = 0; column < size; column++) {
+            int pivot = column;
 
-            while (pivot < n && a[pivot][col] == 0) {
+            while (pivot < size && matrix[pivot][column] == 0) {
                 pivot++;
             }
 
-            if (pivot == n) {
+            if (pivot == size) {
                 throw new IllegalArgumentException(
-                        "Shards kunnen niet worden hersteld");
+                        "Shards kunnen niet worden hersteld"
+                );
             }
 
-            int[] temp = a[col];
-            a[col] = a[pivot];
-            a[pivot] = temp;
+            // Wissel de rijen om als dat nodig is.
+            int[] temporaryRow = matrix[column];
+            matrix[column] = matrix[pivot];
+            matrix[pivot] = temporaryRow;
 
-            int inversePivot = divide(1, a[col][col]);
+            // Maak de waarde op de diagonaal gelijk aan 1.
+            int inversePivot = divide(1, matrix[column][column]);
 
-            for (int j = 0; j < 2 * n; j++) {
-                a[col][j] = multiply(a[col][j], inversePivot);
+            for (int i = 0; i < 2 * size; i++) {
+                matrix[column][i] = multiply(
+                        matrix[column][i], inversePivot
+                );
             }
 
-            for (int row = 0; row < n; row++) {
-                if (row == col) continue;
+            // Maak de overige waarden in deze kolom gelijk aan 0.
+            for (int row = 0; row < size; row++) {
+                if (row == column) {
+                    continue;
+                }
 
-                int factor = a[row][col];
+                int factor = matrix[row][column];
 
-                for (int j = 0; j < 2 * n; j++) {
-                    a[row][j] ^= multiply(factor, a[col][j]);
+                for (int i = 0; i < 2 * size; i++) {
+                    matrix[row][i] ^= multiply(
+                            factor, matrix[column][i]
+                    );
                 }
             }
         }
 
-        int[][] inverse = new int[n][n];
+        // De rechterhelft bevat nu de inverse matrix.
+        int[][] inverse = new int[size][size];
 
-        for (int i = 0; i < n; i++) {
-            System.arraycopy(a[i], n, inverse[i], 0, n);
+        for (int i = 0; i < size; i++) {
+            System.arraycopy(matrix[i], size, inverse[i], 0, size);
         }
 
         return inverse;
     }
 
-    // Vermenigvuldigen in GF(256), met primitieve polynoom 0x11D.
+    // Vermenigvuldigen met de rekenregels van GF(256).
     private static int multiply(int a, int b) {
         int result = 0;
 
@@ -201,6 +231,7 @@ public final class ErasureCoding {
         return result;
     }
 
+    // Deel twee getallen volgens de rekenregels van GF(256).
     private static int divide(int a, int b) {
         if (b == 0) {
             throw new ArithmeticException("Delen door nul");
